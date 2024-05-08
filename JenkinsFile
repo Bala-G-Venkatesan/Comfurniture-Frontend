@@ -1,0 +1,64 @@
+pipeline{
+    agent any
+    tools{
+        nodejs 'nodejs'
+        dockerTool 'docker-tool'
+    }
+    environment {
+        SCANNER_HOME=tool 'sonar'
+        GIT_USER_NAME="Bala-G-Venkatesan"
+        GIT_REPO_NAME="FurnitureDotCom_CD"
+    }
+    stages{
+        stage("WorkspaceClean"){
+            steps{
+                cleanWs()
+            }
+        }
+        stage("Git Clone"){
+            steps{
+                git branch: "main", url: "https://github.com/Bala-G-Venkatesan/Comfurniture-Frontend.git"
+            }
+        }
+        stage("Sonarqube Analysis "){
+            steps{
+                withSonarQubeEnv('sonar') {
+                    sh ''' $SCANNER_HOME/bin/sonar-scanner -Dsonar.projectName=Comfurniture \
+                    -Dsonar.projectKey=Comfurniture '''
+                }
+            }
+        }
+        stage("QualityGates"){
+            steps{
+                script{
+                    waitForQualityGate abortPipeline: true, credentialsId: 'sonarservertoken'
+                }
+            }
+        }
+        stage("DockerImageBuild"){
+            steps{
+                script{
+                withDockerRegistry(credentialsId: 'dockerhub', toolName: 'docker-tool'){
+                sh "docker build -t 'comfurtniture' ."
+                sh "docker tag comfurtniture balajidevops1/comfurtniture:${BUILD_NUMBER}"
+                sh "docker push balajidevops1/comfurtniture:${BUILD_NUMBER}"
+                }
+            }
+        }
+        stage("UpdateKubernetesManifest"){
+            steps{
+                withCredentials([string(credentialsId: 'gitrepotoken', variable: 'GITHUB_TOKEN')]) {
+                sh '''
+                git config user.email "balamech769806@gmail.com"
+                git config user.name "V Balaji"
+                BUILD_NUMBER=${BUILD_NUMBER}
+                sed -i "s/replaceImageTag/$BUILD_NUMBER/g" kubectlmanifest/deployment.yaml
+                git add kubectlmanifest/deployment.yaml
+                git commit -m "Update deployment image to version ${BUILD_NUMBER}"
+                git push https://${GITHUB_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME} HEAD:main
+                '''
+                }
+            }    
+        }
+    }
+}  
